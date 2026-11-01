@@ -4,13 +4,18 @@ from google.protobuf import json_format, message
 from Crypto.Cipher import AES
 from Configuration.AESConfiguration import MAIN_KEY, MAIN_IV
 
-# Load accounts from JSON file
+# Load accounts from JSON file.
+#
+# AccountConfiguration.json holds live credentials and is gitignored, so a
+# fresh clone or a zip extract does not have it. That is expected, not an
+# error: the app is importable and the whole test suite runs without it, and
+# only the routes that actually need an account will report one as missing.
 def load_accounts():
     try:
         with open('./Configuration/AccountConfiguration.json', 'r') as file:
             return json.load(file)
     except FileNotFoundError:
-        raise Exception("AccountConfiguration.json file not found")
+        return {}
     except json.JSONDecodeError:
         raise Exception("Error parsing AccountConfiguration.json")
 

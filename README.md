@@ -28,7 +28,12 @@ FreeFire-Api is a lightweight Python project that interacts with internal Free F
    ```
 
 3. **Configuration**
-   - Add your account credentials to `./Configuration/AccountConfiguration.json` for each supported server.
+   - Copy `Configuration/AccountConfiguration.example.json` to
+     `Configuration/AccountConfiguration.json` and fill in a guest uid/password
+     per server. This file is gitignored because it holds live credentials, so
+     it is absent from a fresh clone or zip extract. The app still imports and
+     the full test suite still passes without it; only the routes that need an
+     account report one as missing.
    - Make sure your protobuf files are compiled and available in `Proto/compiled/`.
 
 4. **Run the API server**
@@ -36,6 +41,24 @@ FreeFire-Api is a lightweight Python project that interacts with internal Free F
    python app.py
    ```
    The API will run on `http://0.0.0.0:5000`.
+
+## Current status (2026-11-01)
+
+Authentication and UID lookup are **blocked by the upstream service**, not by a
+defect here. Every configured guest account is either restricted or has no game
+profile, so `MajorLogin` never returns a session token and the player routes
+cannot be reached.
+
+- `GET /diagnose_account?server=IND` reports exactly which state an account is
+  stuck in (credential valid, platform bound, MajorLogin outcome).
+- `login-legs.md` explains the three separate login legs and which parameters
+  belong to each.
+- `jwt-hunt-report.md`, `account-state-investigation.md` and
+  `majorlogin-comparison.md` carry the full evidence.
+
+The one artifact that would unblock everything is a mitmproxy or logcat capture
+from a real device running the app; see `login-legs.md` for what it would
+supply.
 
 ## Usage
 

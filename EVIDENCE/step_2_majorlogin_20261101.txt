@@ -1,0 +1,38 @@
+# EVIDENCE: Step 2 (major_login) — live capture 2026-11-01
+# Request: POST https://loginbp.ggpolarbear.com/MajorLogin
+# Auth account (guest): 4700657236   Lookup target (player): 11111111  <- distinct
+
+STEP 1 guest token grant : HTTP 200, access_token len 64, open_id present
+STEP 2 major_login       : HTTP 200, body 100 bytes
+  response headers: content-type: application/octet-stream
+                    x-ga-rv: 1
+                    content-length: 100
+
+RAW BODY (100 bytes) hex:
+819269d3323b375288e7a62d442bb01b314f48040228c1b74fa978a4af65657ec4
+c2deeb851ccfff5a92c75d6ee9dad6f01dc5bc34dd9ed3c44cc1f7dbcc3c046a
+1e080118dbeec2d10622144578706c6f6974696e67206c6f6f70686f6c65737a
+020801
+
+Framing: bytes[0:64] opaque prefix, bytes[64:100] plaintext protobuf.
+Tail decode (offset 64):
+  field 13 (queueInfo), len 30:
+    field 1 varint = 1                -> allow = true
+    field 3 varint = 1781577563       -> needWaitSecs (epoch = 2026-06-16, past)
+    field 4 bytes[20] = "Exploiting loopholes"
+  field 15 (appServerId), len 2: field 1 varint = 1
+
+field 8  (token)     : ABSENT
+field 10 (serverUrl) : ABSENT
+
+=> HTTP 200 with NO session token. Not an authentication success.
+
+## Request-contract independence probe (4 distinct payloads, no repeats)
+A. baseline 3 fields (openid, logintoken, platform=4)  HTTP 200 len 100  reason='Exploiting loopholes'
+B. + clientversion=1.134.1, region=IND                 HTTP 200 len 100  reason='Exploiting loopholes'
+C. + platformsdkid, devicemodel, releasechannel         HTTP 200 len 100  reason='Exploiting loopholes'
+D. platform=1 (invalid)                                HTTP 400 len  29  reason=None
+
+Identical 100-byte response for every valid contract => the restriction is
+bound to the ACCOUNT, not to the request shape. Invalid input still gets 400,
+so the endpoint is processing our requests normally.

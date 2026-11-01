@@ -1,3 +1,10 @@
 **/*.bak
 *.pyc
 __pycache__/
+# Live account credentials. Never commit. See credentials-rotation-plan.md
+Configuration/AccountConfiguration.json
+# Stray duplicate credential copy at repo root (unused by the app; load_accounts reads Configuration/). Never commit.
+AccountConfiguration.json
+# Generated guest credentials. Never commit.
+Configuration/AccountConfiguration.generated.json
+Configuration/AccountConfiguration*.json

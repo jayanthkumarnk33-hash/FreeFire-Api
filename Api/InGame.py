@@ -1,11 +1,42 @@
 import requests
+from urllib.parse import urlparse
 import Proto.compiled.PlayerPersonalShow_pb2
 import Proto.compiled.PlayerStats_pb2
 import Proto.compiled.PlayerCSStats_pb2
 import Proto.compiled.SearchAccountByName_pb2
 from Utilities.until import encode_protobuf, decode_protobuf
 import json
-from Configuration.APIConfiguration import RELEASEVERSION, DEBUG
+from Configuration.APIConfiguration import (
+    RELEASEVERSION,
+    DEBUG,
+    X_GA,
+    X_GA_RV,
+    X_GA_SV,
+    UNITY_VERSION,
+    REQUEST_TIMEOUT,
+)
+
+
+class ProtobufError(Exception):
+    """Raised when a protobuf payload cannot be encoded or decoded."""
+
+
+class APIError(Exception):
+    """Raised when the upstream service returns an unusable response."""
+
+
+def _safe_error_text(response, limit=200):
+    """Short, non-sensitive description of a response body.
+
+    Never returns a full body: upstream errors can echo session tokens.
+    """
+    try:
+        text = response.text.strip()
+    except Exception:
+        return "<unreadable body>"
+    if not text:
+        return "<empty body>"
+    return text[:limit] + "..." if len(text) > limit else text
 
 
 
@@ -44,18 +75,20 @@ def search_account_by_keyword(server_url, auth_token, keyword):
             "Accept-Encoding": "gzip",
             "Expect": "100-continue",
             "Authorization": f"Bearer {auth_token}",
-            "X-Unity-Version": "2018.4.11f1",
-            "X-GA": "v1 1",
+            "X-Unity-Version": UNITY_VERSION,
+            "X-GA": X_GA,
+            "X-GA-RV": X_GA_RV,
+            "X-GA-SV": X_GA_SV,
             "ReleaseVersion": RELEASEVERSION,
             "Content-Type": "application/x-www-form-urlencoded",
         }
 
         # --- Execute Request ---
         try:
-            response = requests.post(endpoint, data=payload, headers=headers, timeout=15)
+            response = requests.post(endpoint, data=payload, headers=headers, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             if DEBUG:
-                print("[I] RES:", response.content, "\n")
+                print(f"[I] RES: HTTP {response.status_code}, {len(response.content)} bytes")
         except requests.exceptions.Timeout:
             raise ConnectionError("Request timed out while contacting server.")
         except requests.exceptions.ConnectionError:
@@ -107,23 +140,27 @@ def get_player_personal_show(serverurl, authorization, account_id, need_gallery_
     }, Proto.compiled.PlayerPersonalShow_pb2.request())
 
     headers = {
-      "Host": "client.ind.freefiremobile.com",
-      "User-Agent": "UnityPlayer/2022.3.47f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)",
-      "Accept": "*/*",
-      "Accept-Encoding": "deflate, gzip",
-      "Authorization": f"Bearer {authorization}",
-      "X-GA": "v1 1",
-      "ReleaseVersion": RELEASEVERSION,
-      "Content-Type": "application/x-www-form-urlencoded",
-      "X-Unity-Version": "2022.3.47f1",
-      "Content-Length": "16"
+        "Host": urlparse(serverurl).netloc,
+        "User-Agent": "UnityPlayer/2022.3.47f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)",
+        "Accept": "*/*",
+        "Accept-Encoding": "deflate, gzip",
+        "Authorization": f"Bearer {authorization}",
+        "X-GA": X_GA,
+        "X-GA-RV": X_GA_RV,
+        "X-GA-SV": X_GA_SV,
+        "ReleaseVersion": RELEASEVERSION,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Unity-Version": UNITY_VERSION,
     }
+    # Content-Length is set by requests from the actual body; a hardcoded value
+    # here would be wrong for any payload whose length differs from the original.
     
     
     
-    response = requests.post(url, data=encrypted_payload, headers=headers)
+    response = requests.post(url, data=encrypted_payload, headers=headers, timeout=REQUEST_TIMEOUT)
     if DEBUG:
-        print("[GetPlayerPersonalShow] Response(raw):", response.content, "\n")
+        print(f"[GetPlayerPersonalShow] HTTP {response.status_code}, "
+              f"{len(response.content)} bytes")
     try:
         response.raise_for_status()  # Raise an exception for bad status codes
         
@@ -134,8 +171,11 @@ def get_player_personal_show(serverurl, authorization, account_id, need_gallery_
         json_data = json.loads(json.dumps(message, default=str))
         return json_data
         
-    except requests.exceptions.RequestException as e:
-        print(f"Request failed: {response.text}")
+    except requests.exceptions.RequestException:
+        print(f"[GetPlayerPersonalShow] request failed: "
+              f"HTTP {getattr(response, 'status_code', '?')}")
+        if DEBUG:
+            print(f"[GetPlayerPersonalShow] body: {_safe_error_text(response)}")
         return None
     except Exception as e:
         print(f"Error processing response: {e}")
@@ -223,20 +263,22 @@ def get_player_stats(authorization, serverurl, mode, uid, match_type="CAREER"):
             'Content-Type': "application/octet-stream",
             'Expect': "100-continue",
             'Authorization': f"Bearer {authorization}",
-            'X-Unity-Version': "2018.4.11f1",
-            'X-GA': "v1 1",
+            'X-Unity-Version': UNITY_VERSION,
+            'X-GA': X_GA,
+            'X-GA-RV': X_GA_RV,
+            'X-GA-SV': X_GA_SV,
             'ReleaseVersion': RELEASEVERSION,
             'Content-Type': "application/x-www-form-urlencoded"
         }
         
         # Make request with timeout
         try:
-            response = requests.post(url, data=encrypted_payload, headers=headers, timeout=30)
+            response = requests.post(url, data=encrypted_payload, headers=headers, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()  # Raises HTTPError for bad status codes
             if DEBUG:
-                print("[I] RES:", response.content, "\n")
+                print(f"[I] RES: HTTP {response.status_code}, {len(response.content)} bytes")
         except requests.exceptions.Timeout:
-            raise ConnectionError("Request timed out after 30 seconds")
+            raise ConnectionError("Request timed out while contacting server")
         except requests.exceptions.ConnectionError:
             raise ConnectionError("Failed to connect to the server")
         except requests.exceptions.HTTPError as e:

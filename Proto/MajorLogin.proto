@@ -114,7 +114,12 @@ message response {
     BlacklistInfoRes blacklist = 12;
     LoginQueueInfo queueInfo = 13;
     string tpUrl = 14;
-    uint32 appServerId = 15;
+    // NOTE: the client metadata names field 15 "app_server_id", but on the wire
+    // the live server sends a length-delimited sub-message (wire type 2), which
+    // a uint32 can never produce. Observed content is { field 1: 1 } for every
+    // account tested. Declaring it as uint32 silently discarded the field, which
+    // previously made it look like a genuine appServerId = 0.
+    AppServerInfo appServerId = 15;
     string ipCity = 16;
     string ipSubdivision = 17;
     uint32 kts = 18;
@@ -160,11 +165,23 @@ enum AccountNewbieChoice {
 }
 
 
+// The client metadata declares field 4 as "queue_is_full" (a bool), but the
+// live server sends a length-delimited STRING there: the account enforcement
+// reason, e.g. "Protection Bypass" or "Exploiting loopholes". A bool declaration
+// silently discards it. The type below therefore follows the server, which is
+// what this API has to decode.
 message LoginQueueInfo {
     bool allow = 1;
     uint32 queuePosition = 2;
     uint32 needWaitSecs = 3;
-    bool queueIsFull = 4;
+    string reason = 4;
+}
+
+// Field 15 of MajorLoginRes. Only field 1 has been observed (value 1); the
+// inner field name is not recoverable from the supplied artifacts, so it is
+// named conservatively.
+message AppServerInfo {
+    uint32 serverId = 1;
 }
 
 message BlacklistInfoRes {

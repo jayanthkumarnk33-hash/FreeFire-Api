@@ -4,8 +4,15 @@ import json
 import time
 from datetime import datetime, timedelta
 from Utilities.until import load_accounts
-from Api.Account import get_garena_token, get_major_login
-from Api.InGame import get_player_personal_show, get_player_stats, search_account_by_keyword
+from Api.Account import (get_garena_token, get_major_login, describe_major_login_failure,
+                            MajorLoginError, AccountNotFoundError, get_account_state)
+from Api.InGame import (
+    get_player_personal_show,
+    get_player_stats,
+    search_account_by_keyword,
+    ProtobufError,
+    APIError,
+)
 
 
 accounts = load_accounts()
@@ -45,7 +52,12 @@ def get_search_account_by_keyword():
         # Get major login credentials
         login_response = get_major_login(auth_response["access_token"], auth_response["open_id"])
         if not login_response or 'token' not in login_response:
-            return json.dumps({"error": "Major login failed"}, indent=2), 401, {'Content-Type': 'application/json; charset=utf-8'}
+            return json.dumps({
+                "error": "Major login failed",
+                "detail": describe_major_login_failure(login_response),
+                "restricted": bool(login_response and login_response.get("_restricted")),
+                "restriction_reason": (login_response or {}).get("_restrictionReason"),
+            }, indent=2), 401, {'Content-Type': 'application/json; charset=utf-8'}
         
         # Search for accounts
         search_results = search_account_by_keyword(login_response["serverUrl"], login_response["token"], search_term)
@@ -128,14 +140,21 @@ def get_player_stat():
         # Step 2: Get Major login
         try:
             major_login_result = get_major_login(garena_token_result["access_token"], garena_token_result["open_id"])
-            
-            if not major_login_result or 'token' not in major_login_result:
-                return jsonify({
-                    "success": False,
-                    "error": "Major login failed",
-                    "message": "Failed to obtain Major login token"
-                }), 401
-                
+        except AccountNotFoundError:
+            return jsonify({
+                "success": False,
+                "error": "Account Not Registered",
+                "message": ("This OAuth account has no game profile yet "
+                            "(server said account_not_found). Register the account first."),
+                "code": "ACCOUNT_NOT_REGISTERED",
+            }), 404
+        except MajorLoginError as e:
+            return jsonify({
+                "success": False,
+                "error": "Major login error",
+                "message": str(e),
+                "code": "MAJOR_LOGIN_FAILED",
+            }), 401
         except Exception as e:
             return jsonify({
                 "success": False,
@@ -143,6 +162,14 @@ def get_player_stat():
                 "message": f"Failed to login to Major: {str(e)}"
             }), 502
 
+        if not major_login_result or 'token' not in major_login_result:
+            return jsonify({
+                "success": False,
+                "error": "Major login failed",
+                "message": describe_major_login_failure(major_login_result),
+                "restricted": bool(major_login_result and major_login_result.get("_restricted")),
+                "restriction_reason": (major_login_result or {}).get("_restrictionReason"),
+            }), 401
         # Step 3: Get player stats
         try:
             player_stats = get_player_stats(
@@ -369,12 +396,35 @@ def get_account_info():
             return jsonify(response), 401, {'Content-Type': 'application/json; charset=utf-8'}
         
         # Step 2: Get major login
-        major_login_result = get_major_login(garena_token_result["access_token"], garena_token_result["open_id"])
+        try:
+            major_login_result = get_major_login(garena_token_result["access_token"], garena_token_result["open_id"])
+        except AccountNotFoundError:
+            # The OAuth identity exists but no game profile does yet. This is the
+            # normal state for a freshly created guest account, not an error in
+            # this API. The client answers it by calling MajorRegister.
+            response = {
+                "status": "error",
+                "error": "Account Not Registered",
+                "message": ("This OAuth account has no game profile yet "
+                            "(server said account_not_found). Register the account first."),
+                "code": "ACCOUNT_NOT_REGISTERED"
+            }
+            return jsonify(response), 404, {'Content-Type': 'application/json; charset=utf-8'}
+        except MajorLoginError as e:
+            response = {
+                "status": "error",
+                "error": "Login Failed",
+                "message": str(e),
+                "code": "MAJOR_LOGIN_FAILED"
+            }
+            return jsonify(response), 401, {'Content-Type': 'application/json; charset=utf-8'}
+
         if not major_login_result or 'serverUrl' not in major_login_result or 'token' not in major_login_result:
             response = {
                 "status": "error",
                 "error": "Login Failed",
-                "message": "Failed to perform major login. Service unavailable.",
+                "message": describe_major_login_failure(major_login_result),
+                "restriction_reason": (major_login_result or {}).get("_restrictionReason"),
                 "code": "MAJOR_LOGIN_FAILED"
             }
             return jsonify(response), 401, {'Content-Type': 'application/json; charset=utf-8'}
@@ -420,6 +470,72 @@ def get_account_info():
         }
         return jsonify(response), 500, {'Content-Type': 'application/json; charset=utf-8'}
 
+
+
+@app.route('/diagnose_account', methods=['GET'])
+def diagnose_account():
+    """
+    Report why an account cannot reach the game routes.
+
+    Calls the two Garena MSDK state routes from the APK's endpoint table
+    (com.beetalk.sdk.A0 lines 222 and 256). They answer even for an account that
+    MajorLogin refuses, so they separate "credential dead" from "never
+    registered" from "registered but restricted".
+    """
+    region = request.args.get('server', 'IND').upper()
+    if region not in accounts:
+        return jsonify({
+            "status": "error",
+            "error": "Invalid Server",
+            "available_servers": list(accounts.keys()),
+            "code": "SERVER_NOT_FOUND",
+        }), 400
+
+    try:
+        auth = get_garena_token(accounts[region]['uid'], accounts[region]['password'])
+    except Exception as e:
+        return jsonify({"status": "error", "error": "Authentication failed",
+                        "message": type(e).__name__, "code": "GARENA_AUTH_FAILED"}), 401
+    if not auth or 'access_token' not in auth:
+        return jsonify({"status": "error", "error": "Authentication failed",
+                        "code": "GARENA_AUTH_FAILED"}), 401
+
+    state = get_account_state(auth['access_token'])
+
+    login_status = None
+    try:
+        login = get_major_login(auth['access_token'], auth['open_id'])
+        login_status = ("session_issued"
+                        if login and login.get('token')
+                        else ("restricted" if login and login.get('_restricted') else "no_session"))
+    except AccountNotFoundError:
+        login_status = "account_not_found"
+    except MajorLoginError as e:
+        login_status = f"error: {e}"
+
+    if not state["credentialValid"]:
+        diagnosis = "credential rejected: the OAuth token is no longer accepted"
+    elif not state["platformBound"] and login_status == "account_not_found":
+        diagnosis = "guest created but never provisioned: no game profile and no platform bound"
+    elif login_status == "restricted":
+        diagnosis = "account provisioned but restricted by the server"
+    elif login_status == "session_issued":
+        diagnosis = "account usable"
+    else:
+        diagnosis = "state indeterminate"
+
+    return jsonify({
+        "status": "ok",
+        "region": region,
+        "uid": accounts[region]['uid'],
+        "credential_valid": state["credentialValid"],
+        "platform_bound": state["platformBound"],
+        "user_info": state["userInfo"],
+        "bind_info": state["bindInfo"],
+        "major_login": login_status,
+        "diagnosis": diagnosis,
+        "errors": state["errors"],
+    }), 200
 
 
 if __name__ == '__main__':
