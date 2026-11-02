@@ -353,7 +353,6 @@ def register(region, session=None, timeout=REQUEST_TIMEOUT):
         3: open_id,
         5: 102000007,
         6: 4,
-        7: 1,
         13: 1,
         14: _obfuscate_openid(open_id),
         15: region,
@@ -368,9 +367,11 @@ def register(region, session=None, timeout=REQUEST_TIMEOUT):
     encrypted = bytes.fromhex(_aes_encrypt_hex(raw_payload.hex()))
     headers3 = {
         "Authorization": f"Bearer {access_token}",
-        "X-Unity-Version": "2018.4.11f1",
+        "X-Unity-Version": "2022.3.47f1",
         "X-GA": "v1 1",
-        "ReleaseVersion": "OB50",
+        "X-GA-RV": "OB55",
+        "X-GA-SV": "1",
+        "ReleaseVersion": "OB55",
         "Content-Type": "application/octet-stream",
         "User-Agent": USER_AGENT,
         "Connection": "Keep-Alive",
